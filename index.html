@@ -464,16 +464,32 @@
 
   /* ---------- speech ---------- */
   const synth = window.speechSynthesis;
+  const CHUNK_CHARS = 170; // keep utterances short so Chrome/remote voices don't cut off at ~15s
+  const MALE_RE=/\b(alex|tom|fred|daniel|arthur|gordon|oliver|david|mark|guy|aaron|george|james|ryan|eric|thomas|rishi|liam|william|reed|rocko|junior|albert|bad news)\b/i;
+  const FEMALE_RE=/\b(samantha|victoria|karen|moira|tessa|fiona|allison|ava|susan|zira|aria|jenny|jane|nancy|michelle|serena|sonia|libby|natasha|clara|amber|ashley|emma|olivia|zoe|kate|catherine|nicky|shelley|sandy|flo|princess|superstar)\b/i;
+  function voiceGender(v){ if(MALE_RE.test(v.name)) return '♂'; if(FEMALE_RE.test(v.name)) return '♀'; return ''; }
+  function voiceAccent(v){
+    const l=(v.lang||'').toLowerCase().replace('_','-');
+    if(l.startsWith('en-us')) return 'US'; if(l.startsWith('en-gb')) return 'UK';
+    if(l.startsWith('en-au')) return 'AU'; if(l.startsWith('en-in')) return 'IN';
+    if(l.startsWith('en-ie')) return 'IE'; if(l.startsWith('en-za')) return 'ZA';
+    if(l.startsWith('en-ca')) return 'CA'; if(l.startsWith('en')) return 'EN';
+    return v.lang||'';
+  }
   function voiceScore(v){
     let s=0; const n=v.name||'';
     if(/natural|neural|premium|enhanced/i.test(n)) s+=4;
     if(/google/i.test(n)) s+=3;
-    if(/online|siri|aria|jenny|libby|guy|sonia|natasha|clara|eloquence/i.test(n)) s+=2;
-    if(/^en[-_]US/i.test(v.lang)) s+=1;
+    if(/\b(alex|samantha|tom|david|mark|guy|aria|jenny|allison|ava|susan|zira)\b/i.test(n)) s+=3; // known-good OS voices
+    if(/online|siri|eloquence/i.test(n)) s+=2;
+    if(/^en[-_]us/i.test(v.lang)) s+=1;
     if(v.localService===false) s+=1;
     return s;
   }
-  function voiceLabel(v){ return (voiceScore(v)>=3?'✨ ':'')+v.name+(v.lang?' ('+v.lang+')':''); }
+  function voiceLabel(v){
+    const star=voiceScore(v)>=3?'✨ ':''; const a=voiceAccent(v); const g=voiceGender(v);
+    return star+v.name+(a?' · '+a:'')+(g?' '+g:'');
+  }
   function voiceByName(n){ return state.voices.find(v=>v.name===n) || null; }
   function fillVoiceSelect(sel, selectedName){
     if(!sel) return; sel.innerHTML='';
@@ -501,65 +517,114 @@
   }
   function chapterOf(i){ return state.sentences[i] ? state.sentences[i].chapter : 0; }
   function isChapterStart(i){ return state.chapters.some(c=>c.startSent===i); }
-  function paraRange(i){
-    const s=state.sentences[i]; let a=i,b=i;
-    while(a>0 && state.sentences[a-1].chapter===s.chapter && state.sentences[a-1].para===s.para) a--;
-    while(b+1<state.sentences.length && state.sentences[b+1].chapter===s.chapter && state.sentences[b+1].para===s.para) b++;
-    return [a,b];
+  // group consecutive sentences (within one chapter) up to a character budget → smooth but short utterances
+  function groupEnd(start){
+    const ci=chapterOf(start); let end=start, len=state.sentences[start].text.length;
+    while(end+1<state.sentences.length && chapterOf(end+1)===ci){
+      const nl=state.sentences[end+1].text.length;
+      if(len+1+nl>CHUNK_CHARS) break;
+      len+=1+nl; end++;
+    }
+    return end;
   }
   function highlightHeading(ci){
     document.querySelectorAll('.sent.speaking,.para.para-active,.chapter-title.speaking')
       .forEach(e=>e.classList.remove('speaking','para-active'));
     const h=document.getElementById('ch'+ci); if(h){ h.classList.add('speaking'); scrollToEl(h); }
   }
+
+  // Speak one utterance and call onDone exactly once when it truly finishes.
+  // Primary signal is onend/onerror. A watchdog covers remote voices that never fire onend:
+  // it only advances after speech has actually STARTED and the engine has gone idle (so it
+  // can't clip a slow-to-start network voice), with a long hard fallback against a real stall.
+  let watchTimer=null;
+  function clearWatch(){ if(watchTimer){ clearInterval(watchTimer); watchTimer=null; } }
+  function speakUtter(u, onDone){
+    let done=false, started=false; const t0=Date.now();
+    const finish=()=>{ if(done) return; done=true; clearWatch(); if(state.playing) onDone(); };
+    u.onstart=()=>{ started=true; };
+    u.onend=finish; u.onerror=finish;
+    clearWatch();
+    watchTimer=setInterval(()=>{
+      if(!state.playing || done){ clearWatch(); return; }
+      const ms=Date.now()-t0;
+      if(started && !synth.speaking && !synth.pending && ms>900){ finish(); return; } // finished but onend didn't fire
+      if(ms>30000){ finish(); return; } // hard stall fallback
+    }, 400);
+    try{ synth.speak(u); }catch(e){ finish(); }
+  }
+
   function speakHeading(ci, done){
     if(!synth || !state.cfg.announceHeadings || !state.chapters[ci]){ done(); return; }
-    const u=new SpeechSynthesisUtterance(state.chapters[ci].title);
-    const v=voiceForChapter(ci); if(v) u.voice=v; u.rate=state.rate; u.pitch=1;
-    u.onend=()=>{ if(state.playing) done(); };
-    u.onerror=()=>{ if(state.playing) done(); };
     highlightHeading(ci);
-    synth.speak(u);
+    const u=new SpeechSynthesisUtterance(state.chapters[ci].title);
+    const v=voiceForChapter(ci); try{ if(v) u.voice=v; }catch(e){} u.rate=state.rate; u.pitch=1;
+    speakUtter(u, done);
   }
-  // speak a whole paragraph (from the current sentence to the paragraph's end) as one smooth utterance
+
   function speakChunk(){
     if(!synth || state.idx>=state.sentences.length){ stop(); return; }
-    synth.cancel();
-    const start=state.idx, ci=chapterOf(start);
-    const [,b]=paraRange(start);
+    const start=state.idx, ci=chapterOf(start), end=groupEnd(start);
     const parts=[], offsets=[]; let pos=0;
-    for(let k=start;k<=b;k++){ offsets.push(pos); const tx=state.sentences[k].text; parts.push(tx); pos+=tx.length+1; }
+    for(let k=start;k<=end;k++){ offsets.push(pos); const tx=state.sentences[k].text; parts.push(tx); pos+=tx.length+1; }
     const u=new SpeechSynthesisUtterance(parts.join(' '));
-    const v=voiceForChapter(ci); if(v) u.voice=v; u.rate=state.rate; u.pitch=1;
+    const v=voiceForChapter(ci); try{ if(v) u.voice=v; }catch(e){} u.rate=state.rate; u.pitch=1;
     u.onboundary=(e)=>{
       if(e.charIndex==null) return;
       let k=0; for(let j=0;j<offsets.length;j++){ if(e.charIndex>=offsets[j]) k=j; else break; }
       const gi=start+k;
       if(gi!==state.idx){ state.idx=gi; highlight(); scrollToCurrent(); }
     };
-    u.onend=()=>{
-      if(!state.playing) return;
-      const next=b+1;
+    highlight(); scrollToCurrent();
+    speakUtter(u, ()=>{
+      const next=end+1;
       if(next>=state.sentences.length){ state.idx=state.sentences.length-1; highlight(); stop(); return; }
       state.idx=next;
-      if(chapterOf(next)!==ci){ speakHeading(chapterOf(next), ()=>{ if(state.playing){ highlight(); scrollToCurrent(); speakChunk(); } }); }
+      if(chapterOf(next)!==ci) speakHeading(chapterOf(next), ()=>{ if(state.playing){ highlight(); scrollToCurrent(); speakChunk(); } });
       else { highlight(); scrollToCurrent(); speakChunk(); }
-    };
-    u.onerror=()=>{ if(!state.playing) return; const next=b+1; if(next<state.sentences.length){ state.idx=next; speakChunk(); } else stop(); };
-    highlight(); scrollToCurrent();
-    synth.speak(u);
+    });
+  }
+
+  // cancel cleanly, then start after a tick (avoids the Chrome cancel→speak race that drops utterances)
+  function beginPlayback(){
+    if(!state.playing) return;
+    if(isChapterStart(state.idx)) speakHeading(chapterOf(state.idx), ()=>{ if(state.playing) speakChunk(); });
+    else speakChunk();
   }
   function play(){
     if(!state.sentences.length) return;
     if(!synth){ toast('This browser has no built-in speech. Try Chrome or Edge.'); return; }
     state.playing=true; $('#playBtn').textContent='⏸';
-    if(isChapterStart(state.idx)) speakHeading(chapterOf(state.idx), ()=>{ if(state.playing) speakChunk(); });
-    else speakChunk();
+    clearWatch(); try{ synth.cancel(); }catch(e){}
+    setTimeout(beginPlayback, 80);
   }
-  function pause(){ state.playing=false; $('#playBtn').textContent='▶'; if(synth) synth.cancel(); }
+  function pause(){ state.playing=false; $('#playBtn').textContent='▶'; clearWatch(); if(synth){ try{ synth.cancel(); }catch(e){} } }
   function stop(){ pause(); }
   function togglePlay(){ state.playing ? pause() : play(); }
-  function goTo(i){ state.idx=Math.max(0,Math.min(i,state.sentences.length-1)); highlight(); scrollToCurrent(); if(state.playing){ if(synth) synth.cancel(); speakChunk(); } }
+  function restart(){ // re-speak from current position without the cancel race
+    if(!state.playing || !synth) return;
+    clearWatch(); try{ synth.cancel(); }catch(e){}
+    setTimeout(()=>{ if(state.playing) speakChunk(); }, 80);
+  }
+  function goTo(i){ state.idx=Math.max(0,Math.min(i,state.sentences.length-1)); highlight(); scrollToCurrent(); restart(); }
+
+  function renderCast(){
+    const box=$('#castList'); if(!box) return;
+    const povs=distinctPOVs();
+    if(!povs.length){ box.innerHTML='<div class="cast-empty">No character names detected yet. Name your chapters like “Chapter One: Riley” and they’ll show up here to assign voices.</div>'; return; }
+    box.innerHTML='';
+    povs.forEach(name=>{
+      const row=el('div','cast-row');
+      row.appendChild(el('span','nm',name));
+      const sel=el('select');
+      const def=el('option',null,'— Narrator (default) —'); def.value=''; sel.appendChild(def);
+      state.voices.forEach(v=>{ const o=el('option',null,voiceLabel(v)); o.value=v.name; sel.appendChild(o); });
+      sel.value = state.cfg.cast[name]||'';
+      sel.onchange=()=>{ if(sel.value) state.cfg.cast[name]=sel.value; else delete state.cfg.cast[name]; save(); if(state.playing) restart(); };
+      row.appendChild(sel);
+      box.appendChild(row);
+    });
+  }
 
   function renderCast(){
     const box=$('#castList'); if(!box) return;
@@ -797,8 +862,8 @@
     $('#prevBtn').onclick=()=>goTo(state.idx-1);
     $('#nextBtn').onclick=()=>goTo(state.idx+1);
     $('#stopNoteBtn').onclick=()=>openComposer(state.idx);
-    $('#rate').oninput=(e)=>{ state.rate=parseFloat(e.target.value); $('#rateVal').textContent=state.rate.toFixed(2).replace(/0$/,'')+'×'; if(state.playing){ if(synth) synth.cancel(); speakChunk(); } };
-    function pickNarrator(name){ state.voice=voiceByName(name); state.cfg.voiceName=name; save(); const a=$('#voiceSel'),b=$('#narratorSel'); if(a)a.value=name; if(b)b.value=name; if(state.playing){ if(synth) synth.cancel(); speakChunk(); } }
+    $('#rate').oninput=(e)=>{ state.rate=parseFloat(e.target.value); $('#rateVal').textContent=state.rate.toFixed(2).replace(/0$/,'')+'×'; restart(); };
+    function pickNarrator(name){ state.voice=voiceByName(name); state.cfg.voiceName=name; save(); const a=$('#voiceSel'),b=$('#narratorSel'); if(a)a.value=name; if(b)b.value=name; restart(); }
     $('#voiceSel').onchange=(e)=>pickNarrator(e.target.value);
     $('#narratorSel').onchange=(e)=>pickNarrator(e.target.value);
     $('#announceHeadings').checked = state.cfg.announceHeadings!==false;

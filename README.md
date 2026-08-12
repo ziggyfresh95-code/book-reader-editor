@@ -18,6 +18,7 @@ installing, no servers, nothing to set up.
 
 - **📖 Reads aloud** smoothly, a paragraph at a time (not choppy sentence-by-sentence). Pick a voice and speed; the smoothest voices your browser offers are marked ✨.
 - **🎭 A voice per character** — name your chapters `Chapter One: Riley` and the reader detects the POV character, reads the heading aloud, and switches to that character's voice. Assign voices in the **Voices** tab. Perfect for alternating-POV romance.
+  - Each voice is labeled with its accent and gender, e.g. `✨ Alex · US ♂` or `✨ Samantha · US ♀`, so you can pick an American male/female easily. (On a Mac, **Alex** is the best American male voice.)
 - **✋ Stop & Note** — one button pauses the reading and opens a note box.
 - **🎙 Voice or typing** — dictate your note ("find a less overused word for
   *shivered*", "make this line wittier") or type it.
