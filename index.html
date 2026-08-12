@@ -104,6 +104,11 @@
   .cast-row .nm{min-width:74px; font-weight:600; font-size:14px}
   .cast-row select{flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; min-width:0}
   .cast-empty{font-size:13px; color:var(--soft)}
+  .cast-add{display:flex; gap:8px; margin-top:12px}
+  .cast-add input{flex:1; min-width:0; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit}
+  .cast-row .tag{font-size:10px; padding:1px 6px; border-radius:20px; background:var(--accent-soft); color:var(--accent); font-weight:600}
+  .cast-row .rm{border:none; background:transparent; color:var(--soft); font-size:16px; cursor:pointer; padding:0 4px; line-height:1}
+  .cast-row .rm:hover{color:var(--warn)}
   .sent.hasnote{box-shadow:inset 0 -2px 0 var(--good)}
   .sent.editing{background:var(--accent-soft); outline:2px solid var(--accent); cursor:text}
 
@@ -236,7 +241,7 @@
 
       <div id="tab-voices" class="tabpanel" style="display:none">
         <div class="side-body">
-          <p class="hint">Give each point-of-view character their own voice. The reader detects the character from each chapter heading (e.g. <b>Chapter One: Riley</b>) and switches voices automatically as your chapters alternate.</p>
+          <p class="hint">Give each point-of-view character their own voice. Characters named in your chapter headings (e.g. <b>Chapter One: Riley</b>) show up automatically — or add any character by hand below. The reader switches voices as your chapters alternate.</p>
           <label class="field"><span>Narrator / default voice</span><select id="narratorSel"></select></label>
           <label style="display:flex;align-items:center;gap:8px;margin:10px 0;font-size:14px;cursor:pointer">
             <input type="checkbox" id="announceHeadings" checked> Read chapter headings aloud
@@ -244,6 +249,10 @@
           <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
           <b style="font-size:14px">Cast</b>
           <div id="castList" style="margin-top:8px"></div>
+          <div class="cast-add">
+            <input id="castAddName" placeholder="Add a character (e.g. Desmond)" autocomplete="off">
+            <button class="btn small" id="castAddBtn">Add</button>
+          </div>
           <p class="hint" style="margin-top:12px">✨ marks the smoothest-sounding voices your browser offers. For best quality use <b>Chrome</b> or <b>Edge</b>. Truly lifelike voices (an online service) can be added later.</p>
         </div>
       </div>
@@ -315,7 +324,7 @@
     voice: null,
     rate: 1,
     editingSent: null,
-    cfg: { apiKey:'', model:'claude-sonnet-5', voiceName:'', theme:'', cast:{}, announceHeadings:true }
+    cfg: { apiKey:'', model:'claude-sonnet-5', voiceName:'', theme:'', cast:{}, characters:[], announceHeadings:true }
   };
 
   // extract the POV character name from a chapter heading, e.g. "Chapter One: Riley" -> "Riley"
@@ -608,40 +617,44 @@
   }
   function goTo(i){ state.idx=Math.max(0,Math.min(i,state.sentences.length-1)); highlight(); scrollToCurrent(); restart(); }
 
+  // every character we might assign a voice to: those detected in headings + any added by hand
+  function allCastNames(){
+    const detected=distinctPOVs();
+    const names=detected.slice();
+    (state.cfg.characters||[]).forEach(n=>{ if(!names.includes(n)) names.push(n); });
+    Object.keys(state.cfg.cast||{}).forEach(n=>{ if(!names.includes(n)) names.push(n); });
+    return names;
+  }
   function renderCast(){
     const box=$('#castList'); if(!box) return;
-    const povs=distinctPOVs();
-    if(!povs.length){ box.innerHTML='<div class="cast-empty">No character names detected yet. Name your chapters like “Chapter One: Riley” and they’ll show up here to assign voices.</div>'; return; }
+    const detected=distinctPOVs();
+    const names=allCastNames();
+    if(!names.length){ box.innerHTML='<div class="cast-empty">No characters yet. Add one below, or title your chapters like “Chapter One: Riley” and they’ll appear here automatically.</div>'; return; }
     box.innerHTML='';
-    povs.forEach(name=>{
+    names.forEach(name=>{
       const row=el('div','cast-row');
       row.appendChild(el('span','nm',name));
+      if(detected.includes(name)) row.appendChild(el('span','tag','in book'));
       const sel=el('select');
       const def=el('option',null,'— Narrator (default) —'); def.value=''; sel.appendChild(def);
       state.voices.forEach(v=>{ const o=el('option',null,voiceLabel(v)); o.value=v.name; sel.appendChild(o); });
       sel.value = state.cfg.cast[name]||'';
       sel.onchange=()=>{ if(sel.value) state.cfg.cast[name]=sel.value; else delete state.cfg.cast[name]; save(); if(state.playing) restart(); };
       row.appendChild(sel);
+      if(!detected.includes(name)){
+        const rm=el('button','rm','×'); rm.title='Remove '+name;
+        rm.onclick=()=>{ state.cfg.characters=(state.cfg.characters||[]).filter(c=>c!==name); delete state.cfg.cast[name]; save(); renderCast(); };
+        row.appendChild(rm);
+      }
       box.appendChild(row);
     });
   }
-
-  function renderCast(){
-    const box=$('#castList'); if(!box) return;
-    const povs=distinctPOVs();
-    if(!povs.length){ box.innerHTML='<div class="cast-empty">No character names detected yet. Name your chapters like “Chapter One: Riley” and they’ll show up here to assign voices.</div>'; return; }
-    box.innerHTML='';
-    povs.forEach(name=>{
-      const row=el('div','cast-row');
-      row.appendChild(el('span','nm',name));
-      const sel=el('select');
-      const def=el('option',null,'— Narrator (default) —'); def.value=''; sel.appendChild(def);
-      state.voices.forEach(v=>{ const o=el('option',null,voiceLabel(v)); o.value=v.name; sel.appendChild(o); });
-      sel.value = state.cfg.cast[name]||'';
-      sel.onchange=()=>{ if(sel.value) state.cfg.cast[name]=sel.value; else delete state.cfg.cast[name]; save(); };
-      row.appendChild(sel);
-      box.appendChild(row);
-    });
+  function addCharacter(){
+    const inp=$('#castAddName'); if(!inp) return;
+    const n=inp.value.trim(); if(!n){ inp.focus(); return; }
+    if(!(state.cfg.characters||[]).includes(n) && !distinctPOVs().includes(n)) (state.cfg.characters=state.cfg.characters||[]).push(n);
+    inp.value=''; save(); renderCast(); inp.focus();
+    toast('Added “'+n+'.” Pick a voice for them.');
   }
 
   /* ---------- notes ---------- */
@@ -868,6 +881,8 @@
     $('#narratorSel').onchange=(e)=>pickNarrator(e.target.value);
     $('#announceHeadings').checked = state.cfg.announceHeadings!==false;
     $('#announceHeadings').onchange=(e)=>{ state.cfg.announceHeadings=e.target.checked; save(); };
+    $('#castAddBtn').onclick=addCharacter;
+    $('#castAddName').onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); addCharacter(); } };
 
     // sentence click: single = jump, dblclick = edit; click on note button handled elsewhere
     $('#docInner').addEventListener('click',(e)=>{ const s=e.target.closest('.sent'); if(!s||state.editingSent!=null) return; goTo(Number(s.dataset.i)); });
