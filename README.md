@@ -16,7 +16,8 @@ installing, no servers, nothing to set up.
 
 ## What it does (Version 1)
 
-- **📖 Reads aloud** with your browser's built-in voice. Pick a voice and speed.
+- **📖 Reads aloud** smoothly, a paragraph at a time (not choppy sentence-by-sentence). Pick a voice and speed; the smoothest voices your browser offers are marked ✨.
+- **🎭 A voice per character** — name your chapters `Chapter One: Riley` and the reader detects the POV character, reads the heading aloud, and switches to that character's voice. Assign voices in the **Voices** tab. Perfect for alternating-POV romance.
 - **✋ Stop & Note** — one button pauses the reading and opens a note box.
 - **🎙 Voice or typing** — dictate your note ("find a less overused word for
   *shivered*", "make this line wittier") or type it.
@@ -63,6 +64,6 @@ Your key is stored only in your browser and is used to call Anthropic directly.
 
 ## Roadmap
 
-- **v1 (this):** read-aloud + notes + in-place editing + continuity notes.
+- **v1 (this):** read-aloud + notes + in-place editing + continuity notes + per-character voices and spoken chapter headings.
 - **v2:** hands-free voice commands ("stop", "change that word") while reading.
-- **v3:** consistency scanning across the whole series, richer voices, `.docx` import.
+- **v3:** premium lifelike voices (online service), per-line dialogue voicing, consistency scanning across the whole series, `.docx` import.

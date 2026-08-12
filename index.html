@@ -98,6 +98,12 @@
   .sent{border-radius:5px; padding:1px 2px; cursor:pointer; transition:background .1s}
   .sent:hover{background:var(--accent-soft)}
   .sent.speaking{background:var(--hl); box-shadow:inset 0 -2px 0 var(--hl-edge)}
+  .para.para-active{background:linear-gradient(var(--accent-soft),var(--accent-soft)); border-radius:6px}
+  .chapter-title.speaking{background:var(--hl); box-shadow:inset 0 -2px 0 var(--hl-edge); border-radius:6px; padding:2px 6px}
+  .cast-row{display:flex; align-items:center; gap:8px; margin-bottom:8px}
+  .cast-row .nm{min-width:74px; font-weight:600; font-size:14px}
+  .cast-row select{flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; min-width:0}
+  .cast-empty{font-size:13px; color:var(--soft)}
   .sent.hasnote{box-shadow:inset 0 -2px 0 var(--good)}
   .sent.editing{background:var(--accent-soft); outline:2px solid var(--accent); cursor:text}
 
@@ -215,10 +221,11 @@
     <aside class="side" id="side">
       <div class="tabs">
         <button class="tab active" data-tab="notes">Notes</button>
+        <button class="tab" data-tab="voices">Voices</button>
         <button class="tab" data-tab="ai">AI Assist</button>
       </div>
 
-      <div id="tab-notes">
+      <div id="tab-notes" class="tabpanel">
         <div class="side-head">
           <b>Editorial notes</b><span class="grow"></span>
           <button class="btn ghost small" id="exportNotes">Export</button>
@@ -227,7 +234,21 @@
         <div class="side-body" id="notesList"><div class="empty-list">No notes yet. Hit <b>✋ Stop &amp; Note</b> while reading, or click any sentence.</div></div>
       </div>
 
-      <div id="tab-ai" style="display:none">
+      <div id="tab-voices" class="tabpanel" style="display:none">
+        <div class="side-body">
+          <p class="hint">Give each point-of-view character their own voice. The reader detects the character from each chapter heading (e.g. <b>Chapter One: Riley</b>) and switches voices automatically as your chapters alternate.</p>
+          <label class="field"><span>Narrator / default voice</span><select id="narratorSel"></select></label>
+          <label style="display:flex;align-items:center;gap:8px;margin:10px 0;font-size:14px;cursor:pointer">
+            <input type="checkbox" id="announceHeadings" checked> Read chapter headings aloud
+          </label>
+          <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+          <b style="font-size:14px">Cast</b>
+          <div id="castList" style="margin-top:8px"></div>
+          <p class="hint" style="margin-top:12px">✨ marks the smoothest-sounding voices your browser offers. For best quality use <b>Chrome</b> or <b>Edge</b>. Truly lifelike voices (an online service) can be added later.</p>
+        </div>
+      </div>
+
+      <div id="tab-ai" class="tabpanel" style="display:none">
         <div class="side-body">
           <p class="hint">Turn on optional AI help to get word swaps, wittier lines, and rewrites you approve before they’re applied. Your key is stored only in this browser and calls Anthropic directly.</p>
           <label class="field"><span>Anthropic API key <span class="muted">(sk-ant-…)</span></span><input type="password" id="apiKey" placeholder="paste key to enable AI"></label>
@@ -294,8 +315,23 @@
     voice: null,
     rate: 1,
     editingSent: null,
-    cfg: { apiKey:'', model:'claude-sonnet-5', voiceName:'', theme:'' }
+    cfg: { apiKey:'', model:'claude-sonnet-5', voiceName:'', theme:'', cast:{}, announceHeadings:true }
   };
+
+  // extract the POV character name from a chapter heading, e.g. "Chapter One: Riley" -> "Riley"
+  function parsePOV(title){
+    let t = String(title||'').replace(/\bP\.?O\.?V\.?\b/ig,'').replace(/[()]/g,'').trim();
+    const m = t.match(/[:\-–—]\s*(.+)$/);
+    let name = (m ? m[1] : t).replace(/\s+/g,' ').trim();
+    if(/^(chapter|prologue|epilogue|part)\b/i.test(name)) return '';
+    const words = name.split(' ').filter(Boolean);
+    if(!words.length || words.length>3) return '';
+    if(!/[A-Za-z]/.test(name)) return '';
+    return name;
+  }
+  function distinctPOVs(){
+    const seen=[]; state.chapters.forEach(c=>{ if(c.povName && !seen.includes(c.povName)) seen.push(c.povName); }); return seen;
+  }
 
   /* ---------- persistence ---------- */
   function save(){
@@ -323,7 +359,7 @@
     const chapterRe = /^(#{1,3}\s+.+|chapter\s+[\w\d]+.*|prologue.*|epilogue.*|part\s+[\w\d]+.*)$/i;
 
     function ensureChapter(title){
-      curChapter = {title: title||'Untitled', startSent: sentences.length, endSent: sentences.length};
+      curChapter = {title: title||'Untitled', povName: parsePOV(title), startSent: sentences.length, endSent: sentences.length};
       chapters.push(curChapter);
     }
     // group into paragraphs, detect chapter headings
@@ -355,7 +391,7 @@
       paraBuf.push(trimmed);
     }
     flushPara();
-    if(!chapters.length){ chapters.push({title:'Chapter 1', startSent:0, endSent:sentences.length}); }
+    if(!chapters.length){ chapters.push({title:'Chapter 1', povName:'', startSent:0, endSent:sentences.length}); }
     return {chapters, sentences};
   }
 
@@ -402,22 +438,24 @@
     });
     highlight();
     renderNotes();
+    renderCast();
     updateProgress();
   }
 
   function hasNote(i){ return state.notes.some(n=>n.sentIndex===i); }
 
   function highlight(){
-    document.querySelectorAll('.sent.speaking').forEach(e=>e.classList.remove('speaking'));
+    document.querySelectorAll('.sent.speaking,.para.para-active,.chapter-title.speaking')
+      .forEach(e=>e.classList.remove('speaking','para-active'));
     const cur = document.querySelector('.sent[data-i="'+state.idx+'"]');
-    if(cur){ cur.classList.add('speaking'); }
+    if(cur){ cur.classList.add('speaking'); const p=cur.closest('.para'); if(p) p.classList.add('para-active'); }
     updateProgress();
   }
-  function scrollToCurrent(){
-    const cur = document.querySelector('.sent[data-i="'+state.idx+'"]');
-    if(cur){ const r=cur.getBoundingClientRect(); const doc=$('#doc'); const dr=doc.getBoundingClientRect();
-      if(r.top<dr.top+80 || r.bottom>dr.bottom-120){ cur.scrollIntoView({block:'center', behavior:'smooth'}); } }
+  function scrollToEl(elm){
+    if(!elm) return; const r=elm.getBoundingClientRect(); const doc=$('#doc'); const dr=doc.getBoundingClientRect();
+    if(r.top<dr.top+80 || r.bottom>dr.bottom-120){ elm.scrollIntoView({block:'center', behavior:'smooth'}); }
   }
+  function scrollToCurrent(){ scrollToEl(document.querySelector('.sent[data-i="'+state.idx+'"]')); }
   function updateProgress(){
     const total = state.sentences.length;
     $('#progress').textContent = total ? `${Math.min(state.idx+1,total)} / ${total}` : '';
@@ -426,39 +464,120 @@
 
   /* ---------- speech ---------- */
   const synth = window.speechSynthesis;
+  function voiceScore(v){
+    let s=0; const n=v.name||'';
+    if(/natural|neural|premium|enhanced/i.test(n)) s+=4;
+    if(/google/i.test(n)) s+=3;
+    if(/online|siri|aria|jenny|libby|guy|sonia|natasha|clara|eloquence/i.test(n)) s+=2;
+    if(/^en[-_]US/i.test(v.lang)) s+=1;
+    if(v.localService===false) s+=1;
+    return s;
+  }
+  function voiceLabel(v){ return (voiceScore(v)>=3?'✨ ':'')+v.name+(v.lang?' ('+v.lang+')':''); }
+  function voiceByName(n){ return state.voices.find(v=>v.name===n) || null; }
+  function fillVoiceSelect(sel, selectedName){
+    if(!sel) return; sel.innerHTML='';
+    state.voices.forEach(v=>{ const o=el('option',null, voiceLabel(v)); o.value=v.name; sel.appendChild(o); });
+    if(selectedName && state.voices.some(v=>v.name===selectedName)) sel.value=selectedName;
+  }
   function loadVoices(){
-    state.voices = (synth ? synth.getVoices() : []).filter(v=>/^en(-|_|$)/i.test(v.lang) || v.lang==='');
-    if(!state.voices.length && synth) state.voices = synth.getVoices();
-    const sel = $('#voiceSel'); sel.innerHTML='';
-    state.voices.forEach((v,i)=>{ const o=el('option',null, v.name+(v.lang?' ('+v.lang+')':'')); o.value=i; sel.appendChild(o); });
-    let chosen = state.voices.findIndex(v=>v.name===state.cfg.voiceName);
-    if(chosen<0) chosen = state.voices.findIndex(v=>/Samantha|Google US|Jenny|Aria|Zira|female/i.test(v.name));
-    if(chosen<0) chosen = 0;
-    sel.value = chosen; state.voice = state.voices[chosen]||null;
+    const all = synth ? synth.getVoices() : [];
+    const en = all.filter(v=>/^en(-|_|$)/i.test(v.lang));
+    state.voices = (en.length?en:all).slice().sort((a,b)=>voiceScore(b)-voiceScore(a));
+    let name = state.cfg.voiceName;
+    if(!name || !state.voices.some(v=>v.name===name)) name = state.voices.length ? state.voices[0].name : '';
+    state.cfg.voiceName = name; state.voice = voiceByName(name);
+    fillVoiceSelect($('#voiceSel'), name);
+    fillVoiceSelect($('#narratorSel'), name);
+    renderCast();
   }
   if(synth){ synth.onvoiceschanged = loadVoices; }
 
-  function speakCurrent(){
+  // which voice narrates a chapter, based on its detected POV character
+  function voiceForChapter(ci){
+    const ch = state.chapters[ci];
+    if(ch && ch.povName && state.cfg.cast[ch.povName]){ const v=voiceByName(state.cfg.cast[ch.povName]); if(v) return v; }
+    return state.voice;
+  }
+  function chapterOf(i){ return state.sentences[i] ? state.sentences[i].chapter : 0; }
+  function isChapterStart(i){ return state.chapters.some(c=>c.startSent===i); }
+  function paraRange(i){
+    const s=state.sentences[i]; let a=i,b=i;
+    while(a>0 && state.sentences[a-1].chapter===s.chapter && state.sentences[a-1].para===s.para) a--;
+    while(b+1<state.sentences.length && state.sentences[b+1].chapter===s.chapter && state.sentences[b+1].para===s.para) b++;
+    return [a,b];
+  }
+  function highlightHeading(ci){
+    document.querySelectorAll('.sent.speaking,.para.para-active,.chapter-title.speaking')
+      .forEach(e=>e.classList.remove('speaking','para-active'));
+    const h=document.getElementById('ch'+ci); if(h){ h.classList.add('speaking'); scrollToEl(h); }
+  }
+  function speakHeading(ci, done){
+    if(!synth || !state.cfg.announceHeadings || !state.chapters[ci]){ done(); return; }
+    const u=new SpeechSynthesisUtterance(state.chapters[ci].title);
+    const v=voiceForChapter(ci); if(v) u.voice=v; u.rate=state.rate; u.pitch=1;
+    u.onend=()=>{ if(state.playing) done(); };
+    u.onerror=()=>{ if(state.playing) done(); };
+    highlightHeading(ci);
+    synth.speak(u);
+  }
+  // speak a whole paragraph (from the current sentence to the paragraph's end) as one smooth utterance
+  function speakChunk(){
     if(!synth || state.idx>=state.sentences.length){ stop(); return; }
     synth.cancel();
-    const u = new SpeechSynthesisUtterance(state.sentences[state.idx].text);
-    if(state.voice) u.voice = state.voice;
-    u.rate = state.rate; u.pitch = 1;
-    u.onend = ()=>{ if(state.playing){ state.idx++; if(state.idx>=state.sentences.length){ stop(); return; } highlight(); scrollToCurrent(); speakCurrent(); } };
-    u.onerror = ()=>{ /* skip forward on error */ if(state.playing){ state.idx++; if(state.idx<state.sentences.length){ highlight(); speakCurrent(); } else stop(); } };
+    const start=state.idx, ci=chapterOf(start);
+    const [,b]=paraRange(start);
+    const parts=[], offsets=[]; let pos=0;
+    for(let k=start;k<=b;k++){ offsets.push(pos); const tx=state.sentences[k].text; parts.push(tx); pos+=tx.length+1; }
+    const u=new SpeechSynthesisUtterance(parts.join(' '));
+    const v=voiceForChapter(ci); if(v) u.voice=v; u.rate=state.rate; u.pitch=1;
+    u.onboundary=(e)=>{
+      if(e.charIndex==null) return;
+      let k=0; for(let j=0;j<offsets.length;j++){ if(e.charIndex>=offsets[j]) k=j; else break; }
+      const gi=start+k;
+      if(gi!==state.idx){ state.idx=gi; highlight(); scrollToCurrent(); }
+    };
+    u.onend=()=>{
+      if(!state.playing) return;
+      const next=b+1;
+      if(next>=state.sentences.length){ state.idx=state.sentences.length-1; highlight(); stop(); return; }
+      state.idx=next;
+      if(chapterOf(next)!==ci){ speakHeading(chapterOf(next), ()=>{ if(state.playing){ highlight(); scrollToCurrent(); speakChunk(); } }); }
+      else { highlight(); scrollToCurrent(); speakChunk(); }
+    };
+    u.onerror=()=>{ if(!state.playing) return; const next=b+1; if(next<state.sentences.length){ state.idx=next; speakChunk(); } else stop(); };
     highlight(); scrollToCurrent();
     synth.speak(u);
   }
   function play(){
     if(!state.sentences.length) return;
     if(!synth){ toast('This browser has no built-in speech. Try Chrome or Edge.'); return; }
-    state.playing = true; $('#playBtn').textContent='⏸';
-    speakCurrent();
+    state.playing=true; $('#playBtn').textContent='⏸';
+    if(isChapterStart(state.idx)) speakHeading(chapterOf(state.idx), ()=>{ if(state.playing) speakChunk(); });
+    else speakChunk();
   }
   function pause(){ state.playing=false; $('#playBtn').textContent='▶'; if(synth) synth.cancel(); }
   function stop(){ pause(); }
   function togglePlay(){ state.playing ? pause() : play(); }
-  function goTo(i){ state.idx=Math.max(0,Math.min(i,state.sentences.length-1)); highlight(); scrollToCurrent(); if(state.playing) speakCurrent(); }
+  function goTo(i){ state.idx=Math.max(0,Math.min(i,state.sentences.length-1)); highlight(); scrollToCurrent(); if(state.playing){ if(synth) synth.cancel(); speakChunk(); } }
+
+  function renderCast(){
+    const box=$('#castList'); if(!box) return;
+    const povs=distinctPOVs();
+    if(!povs.length){ box.innerHTML='<div class="cast-empty">No character names detected yet. Name your chapters like “Chapter One: Riley” and they’ll show up here to assign voices.</div>'; return; }
+    box.innerHTML='';
+    povs.forEach(name=>{
+      const row=el('div','cast-row');
+      row.appendChild(el('span','nm',name));
+      const sel=el('select');
+      const def=el('option',null,'— Narrator (default) —'); def.value=''; sel.appendChild(def);
+      state.voices.forEach(v=>{ const o=el('option',null,voiceLabel(v)); o.value=v.name; sel.appendChild(o); });
+      sel.value = state.cfg.cast[name]||'';
+      sel.onchange=()=>{ if(sel.value) state.cfg.cast[name]=sel.value; else delete state.cfg.cast[name]; save(); };
+      row.appendChild(sel);
+      box.appendChild(row);
+    });
+  }
 
   /* ---------- notes ---------- */
   let composing = { sentIndex:null, type:'general' };
@@ -678,8 +797,12 @@
     $('#prevBtn').onclick=()=>goTo(state.idx-1);
     $('#nextBtn').onclick=()=>goTo(state.idx+1);
     $('#stopNoteBtn').onclick=()=>openComposer(state.idx);
-    $('#rate').oninput=(e)=>{ state.rate=parseFloat(e.target.value); $('#rateVal').textContent=state.rate.toFixed(2).replace(/0$/,'')+'×'; if(state.playing) speakCurrent(); };
-    $('#voiceSel').onchange=(e)=>{ state.voice=state.voices[e.target.value]; state.cfg.voiceName=state.voice?state.voice.name:''; save(); if(state.playing) speakCurrent(); };
+    $('#rate').oninput=(e)=>{ state.rate=parseFloat(e.target.value); $('#rateVal').textContent=state.rate.toFixed(2).replace(/0$/,'')+'×'; if(state.playing){ if(synth) synth.cancel(); speakChunk(); } };
+    function pickNarrator(name){ state.voice=voiceByName(name); state.cfg.voiceName=name; save(); const a=$('#voiceSel'),b=$('#narratorSel'); if(a)a.value=name; if(b)b.value=name; if(state.playing){ if(synth) synth.cancel(); speakChunk(); } }
+    $('#voiceSel').onchange=(e)=>pickNarrator(e.target.value);
+    $('#narratorSel').onchange=(e)=>pickNarrator(e.target.value);
+    $('#announceHeadings').checked = state.cfg.announceHeadings!==false;
+    $('#announceHeadings').onchange=(e)=>{ state.cfg.announceHeadings=e.target.checked; save(); };
 
     // sentence click: single = jump, dblclick = edit; click on note button handled elsewhere
     $('#docInner').addEventListener('click',(e)=>{ const s=e.target.closest('.sent'); if(!s||state.editingSent!=null) return; goTo(Number(s.dataset.i)); });
@@ -710,8 +833,8 @@
     // side tabs & toggle
     document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
       document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
-      $('#tab-notes').style.display = t.dataset.tab==='notes'?'block':'none';
-      $('#tab-ai').style.display = t.dataset.tab==='ai'?'block':'none';
+      document.querySelectorAll('.tabpanel').forEach(p=>p.style.display='none');
+      const panel=$('#tab-'+t.dataset.tab); if(panel) panel.style.display='block';
     });
     $('#sideToggle').onclick=()=>$('#side').classList.toggle('open');
     $('#themeBtn').onclick=toggleTheme;
