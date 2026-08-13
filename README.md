@@ -42,7 +42,9 @@ installing, no servers, nothing to set up.
 
 From Google Docs: **File → Download → Plain Text (.txt)**, then drop the file in
 (or just copy-and-paste your chapters). Start a chapter with a line like
-`Chapter One` and it gets detected automatically.
+`Chapter One` and it gets detected automatically. Each line becomes its own
+paragraph (matching how Google Docs exports), and divider lines like `______`
+are skipped so they aren't read aloud.
 
 ## Optional: AI suggestions
 

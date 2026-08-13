@@ -390,35 +390,31 @@
       curChapter = {title: title||'Untitled', povName: parsePOV(title), startSent: sentences.length, endSent: sentences.length};
       chapters.push(curChapter);
     }
-    // group into paragraphs, detect chapter headings
-    let paraBuf = [];
+    // Each non-blank line is its own paragraph (this matches how Google Docs and most
+    // word processors export .txt — one line per paragraph). Blank lines and divider
+    // lines (____, ***, ---) are skipped so they aren't read aloud.
     let paraIndex = 0;
-    function flushPara(){
-      if(!paraBuf.length) return;
+    function addParagraph(lineText){
       if(!curChapter) ensureChapter('Chapter 1');
-      const paraText = paraBuf.join(' ').trim();
-      splitSentences(paraText).forEach(s=>{
+      splitSentences(lineText).forEach(s=>{
         sentences.push({text:s, chapter: chapters.length-1, para: paraIndex});
       });
       curChapter.endSent = sentences.length;
       paraIndex++;
-      paraBuf = [];
     }
     for(let i=0;i<lines.length;i++){
-      const ln = lines[i];
-      const trimmed = ln.trim();
-      if(trimmed==='' ){ flushPara(); continue; }
+      const trimmed = lines[i].trim();
+      if(trimmed==='') continue;
+      if(!/[A-Za-z0-9]/.test(trimmed)) continue; // divider / decoration line, nothing to read
       // heading: a short line matching chapter pattern, or markdown #
       const isHeading = chapterRe.test(trimmed) && trimmed.length < 80 && !/[.!?]"?$/.test(trimmed);
       if(isHeading){
-        flushPara();
         ensureChapter(trimmed.replace(/^#{1,3}\s+/,''));
         paraIndex = 0;
         continue;
       }
-      paraBuf.push(trimmed);
+      addParagraph(trimmed);
     }
-    flushPara();
     if(!chapters.length){ chapters.push({title:'Chapter 1', povName:'', startSent:0, endSent:sentences.length}); }
     return {chapters, sentences};
   }
