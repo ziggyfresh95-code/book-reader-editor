@@ -92,7 +92,8 @@
   /* manuscript */
   .doc{overflow:auto; padding:26px clamp(16px,6vw,90px) 140px; flex:1; scroll-behavior:smooth}
   .doc-inner{max-width:720px; margin:0 auto; font-size:clamp(17px,1.15rem,20px); line-height:1.85}
-  .chapter-title{font-size:1.35em; font-weight:700; margin:1.6em 0 .6em; color:var(--accent); scroll-margin-top:20px}
+  .chapter-title{font-size:1.35em; font-weight:700; margin:1.6em 0 .6em; color:var(--accent); scroll-margin-top:20px; cursor:pointer}
+  .chapter-title:hover{text-decoration:underline dotted}
   .chapter-title:first-child{margin-top:0}
   .para{margin:0 0 1.05em}
   .sent{border-radius:5px; padding:1px 2px; cursor:pointer; transition:background .1s}
@@ -109,6 +110,12 @@
   .cast-row .tag{font-size:10px; padding:1px 6px; border-radius:20px; background:var(--accent-soft); color:var(--accent); font-weight:600}
   .cast-row .rm{border:none; background:transparent; color:var(--soft); font-size:16px; cursor:pointer; padding:0 4px; line-height:1}
   .cast-row .rm:hover{color:var(--warn)}
+  #voiceManager summary{cursor:pointer; list-style:revert}
+  .vm-actions{display:flex; gap:8px; margin:8px 0}
+  .vm-list{max-height:220px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:6px}
+  .vm-item{display:flex; align-items:center; gap:8px; padding:4px 6px; font-size:13px; border-radius:6px; cursor:pointer}
+  .vm-item:hover{background:var(--accent-soft)}
+  .vm-item input{margin:0}
   .sent.hasnote{box-shadow:inset 0 -2px 0 var(--good)}
   .sent.editing{background:var(--accent-soft); outline:2px solid var(--accent); cursor:text}
 
@@ -253,6 +260,16 @@
             <input id="castAddName" placeholder="Add a character (e.g. Desmond)" autocomplete="off">
             <button class="btn small" id="castAddBtn">Add</button>
           </div>
+          <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+          <details id="voiceManager">
+            <summary><b style="font-size:14px">Which voices to show</b> <span class="hint" id="voiceCount"></span></summary>
+            <p class="hint" style="margin:8px 0">Uncheck any you don't want cluttering the menus. This only filters what you see here — it can't add voices your computer hasn't installed.</p>
+            <div class="vm-actions">
+              <button class="btn ghost small" id="vmAll">Show all</button>
+              <button class="btn ghost small" id="vmStarred">Only ✨</button>
+            </div>
+            <div id="voiceMgrList" class="vm-list"></div>
+          </details>
           <p class="hint" style="margin-top:12px">✨ marks the smoothest-sounding voices your browser offers. For best quality use <b>Chrome</b> or <b>Edge</b>. Truly lifelike voices (an online service) can be added later.</p>
         </div>
       </div>
@@ -324,19 +341,21 @@
     voice: null,
     rate: 1,
     editingSent: null,
-    cfg: { apiKey:'', model:'claude-sonnet-5', voiceName:'', theme:'', cast:{}, characters:[], announceHeadings:true }
+    headingPending: false,
+    cfg: { apiKey:'', model:'claude-sonnet-5', voiceName:'', theme:'', cast:{}, characters:[], announceHeadings:true, enabledVoices:null }
   };
 
-  // extract the POV character name from a chapter heading, e.g. "Chapter One: Riley" -> "Riley"
+  // extract the POV character's first name from a chapter heading, e.g.
+  // "Chapter One: Riley" -> "Riley", "Chapter Two: Desmond Revised: Deepseek" -> "Desmond"
   function parsePOV(title){
     let t = String(title||'').replace(/\bP\.?O\.?V\.?\b/ig,'').replace(/[()]/g,'').trim();
     const m = t.match(/[:\-–—]\s*(.+)$/);
     let name = (m ? m[1] : t).replace(/\s+/g,' ').trim();
     if(/^(chapter|prologue|epilogue|part)\b/i.test(name)) return '';
-    const words = name.split(' ').filter(Boolean);
-    if(!words.length || words.length>3) return '';
-    if(!/[A-Za-z]/.test(name)) return '';
-    return name;
+    // take just the first name-like word so heading variants map to one character
+    const first = (name.match(/[A-Za-z][A-Za-z'’-]*/) || [])[0] || '';
+    if(!first || /^(the|a|an|and|of|part|two|one|three|four|five)$/i.test(first)) return '';
+    return first;
   }
   function distinctPOVs(){
     const seen=[]; state.chapters.forEach(c=>{ if(c.povName && !seen.includes(c.povName)) seen.push(c.povName); }); return seen;
@@ -474,7 +493,7 @@
   /* ---------- speech ---------- */
   const synth = window.speechSynthesis;
   const CHUNK_CHARS = 170; // keep utterances short so Chrome/remote voices don't cut off at ~15s
-  const MALE_RE=/\b(alex|tom|fred|daniel|arthur|gordon|oliver|david|mark|guy|aaron|george|james|ryan|eric|thomas|rishi|liam|william|reed|rocko|junior|albert|bad news)\b/i;
+  const MALE_RE=/\b(alex|tom|fred|daniel|arthur|gordon|oliver|david|mark|guy|aaron|evan|nathan|george|james|ryan|eric|thomas|rishi|liam|william|reed|rocko|junior|albert|bad news)\b/i;
   const FEMALE_RE=/\b(samantha|victoria|karen|moira|tessa|fiona|allison|ava|susan|zira|aria|jenny|jane|nancy|michelle|serena|sonia|libby|natasha|clara|amber|ashley|emma|olivia|zoe|kate|catherine|nicky|shelley|sandy|flo|princess|superstar)\b/i;
   function voiceGender(v){ if(MALE_RE.test(v.name)) return '♂'; if(FEMALE_RE.test(v.name)) return '♀'; return ''; }
   function voiceAccent(v){
@@ -489,7 +508,7 @@
     let s=0; const n=v.name||'';
     if(/natural|neural|premium|enhanced/i.test(n)) s+=4;
     if(/google/i.test(n)) s+=3;
-    if(/\b(alex|samantha|tom|david|mark|guy|aria|jenny|allison|ava|susan|zira)\b/i.test(n)) s+=3; // known-good OS voices
+    if(/\b(alex|samantha|tom|david|mark|guy|aria|jenny|allison|ava|susan|zira|aaron|evan|nathan)\b/i.test(n)) s+=3; // known-good OS voices
     if(/online|siri|eloquence/i.test(n)) s+=2;
     if(/^en[-_]us/i.test(v.lang)) s+=1;
     if(v.localService===false) s+=1;
@@ -500,10 +519,18 @@
     return star+v.name+(a?' · '+a:'')+(g?' '+g:'');
   }
   function voiceByName(n){ return state.voices.find(v=>v.name===n) || null; }
+  // the voices to show in the pickers: all of them, or just the user's curated set,
+  // always keeping any names passed in `keep` (current selection / assignment) so they never vanish
+  function visibleVoices(keep){
+    const en=state.cfg.enabledVoices;
+    let list = Array.isArray(en) ? state.voices.filter(v=>en.includes(v.name)) : state.voices.slice();
+    (keep||[]).forEach(nm=>{ if(nm && !list.some(v=>v.name===nm)){ const v=voiceByName(nm); if(v) list.push(v); } });
+    return list;
+  }
   function fillVoiceSelect(sel, selectedName){
     if(!sel) return; sel.innerHTML='';
-    state.voices.forEach(v=>{ const o=el('option',null, voiceLabel(v)); o.value=v.name; sel.appendChild(o); });
-    if(selectedName && state.voices.some(v=>v.name===selectedName)) sel.value=selectedName;
+    visibleVoices([selectedName]).forEach(v=>{ const o=el('option',null, voiceLabel(v)); o.value=v.name; sel.appendChild(o); });
+    if(selectedName && [...sel.options].some(o=>o.value===selectedName)) sel.value=selectedName;
   }
   function loadVoices(){
     const all = synth ? synth.getVoices() : [];
@@ -515,6 +542,7 @@
     fillVoiceSelect($('#voiceSel'), name);
     fillVoiceSelect($('#narratorSel'), name);
     renderCast();
+    renderVoiceManager();
   }
   if(synth){ synth.onvoiceschanged = loadVoices; }
 
@@ -546,12 +574,14 @@
   // Primary signal is onend/onerror. A watchdog covers remote voices that never fire onend:
   // it only advances after speech has actually STARTED and the engine has gone idle (so it
   // can't clip a slow-to-start network voice), with a long hard fallback against a real stall.
-  let watchTimer=null;
+  let watchTimer=null, hlTimers=[];
   function clearWatch(){ if(watchTimer){ clearInterval(watchTimer); watchTimer=null; } }
-  function speakUtter(u, onDone){
+  function clearHlTimers(){ hlTimers.forEach(clearTimeout); hlTimers=[]; }
+  // Speak one utterance. onDone fires once when it truly finishes; onStart fires when speech begins.
+  function speakUtter(u, onDone, onStart){
     let done=false, started=false; const t0=Date.now();
     const finish=()=>{ if(done) return; done=true; clearWatch(); if(state.playing) onDone(); };
-    u.onstart=()=>{ started=true; };
+    u.onstart=()=>{ if(!started){ started=true; if(onStart) onStart(); } };
     u.onend=finish; u.onerror=finish;
     clearWatch();
     watchTimer=setInterval(()=>{
@@ -561,6 +591,8 @@
       if(ms>30000){ finish(); return; } // hard stall fallback
     }, 400);
     try{ synth.speak(u); }catch(e){ finish(); }
+    // fallback: if onstart never fires (some voices), still trigger the start hook shortly
+    setTimeout(()=>{ if(!started && !done && state.playing){ started=true; if(onStart) onStart(); } }, 550);
   }
 
   function speakHeading(ci, done){
@@ -573,49 +605,79 @@
 
   function speakChunk(){
     if(!synth || state.idx>=state.sentences.length){ stop(); return; }
+    clearHlTimers();
     const start=state.idx, ci=chapterOf(start), end=groupEnd(start);
     const parts=[], offsets=[]; let pos=0;
     for(let k=start;k<=end;k++){ offsets.push(pos); const tx=state.sentences[k].text; parts.push(tx); pos+=tx.length+1; }
-    const u=new SpeechSynthesisUtterance(parts.join(' '));
+    const fullText=parts.join(' '); const totalChars=Math.max(1, fullText.length);
+    const u=new SpeechSynthesisUtterance(fullText);
     const v=voiceForChapter(ci); try{ if(v) u.voice=v; }catch(e){} u.rate=state.rate; u.pitch=1;
+    let boundaryFired=false;
+    // Accurate path: word-boundary events (local voices). Move the highlight to the spoken sentence.
     u.onboundary=(e)=>{
       if(e.charIndex==null) return;
+      boundaryFired=true; clearHlTimers();
       let k=0; for(let j=0;j<offsets.length;j++){ if(e.charIndex>=offsets[j]) k=j; else break; }
       const gi=start+k;
       if(gi!==state.idx){ state.idx=gi; highlight(); scrollToCurrent(); }
     };
+    // Fallback path: remote voices (e.g. Google) don't fire boundary events, so estimate each
+    // sentence's start time from its length and advance the highlight on a timer.
+    const scheduleHighlights=()=>{
+      if(boundaryFired) return;
+      const cps = 14 * state.rate; // rough characters spoken per second
+      for(let k=1;k<=end-start;k++){
+        const ms = (offsets[k]/cps)*1000;
+        hlTimers.push(setTimeout(()=>{ if(!boundaryFired && state.playing && state.idx<start+k+1){ state.idx=start+k; highlight(); scrollToCurrent(); } }, ms));
+      }
+    };
     highlight(); scrollToCurrent();
     speakUtter(u, ()=>{
+      clearHlTimers();
       const next=end+1;
       if(next>=state.sentences.length){ state.idx=state.sentences.length-1; highlight(); stop(); return; }
       state.idx=next;
       if(chapterOf(next)!==ci) speakHeading(chapterOf(next), ()=>{ if(state.playing){ highlight(); scrollToCurrent(); speakChunk(); } });
       else { highlight(); scrollToCurrent(); speakChunk(); }
-    });
+    }, scheduleHighlights);
   }
 
-  // cancel cleanly, then start after a tick (avoids the Chrome cancel→speak race that drops utterances)
-  function beginPlayback(){
+  // Start speaking from the current position. Reads the chapter heading first only when it's
+  // "pending" — i.e. the user clicked the chapter title or just loaded the book — NOT when they
+  // clicked into the first sentence.
+  function speakFromCurrent(){
     if(!state.playing) return;
-    if(isChapterStart(state.idx)) speakHeading(chapterOf(state.idx), ()=>{ if(state.playing) speakChunk(); });
-    else speakChunk();
+    if(state.headingPending && isChapterStart(state.idx)){
+      state.headingPending=false;
+      speakHeading(chapterOf(state.idx), ()=>{ if(state.playing) speakChunk(); });
+    } else {
+      state.headingPending=false;
+      speakChunk();
+    }
   }
   function play(){
     if(!state.sentences.length) return;
     if(!synth){ toast('This browser has no built-in speech. Try Chrome or Edge.'); return; }
     state.playing=true; $('#playBtn').textContent='⏸';
-    clearWatch(); try{ synth.cancel(); }catch(e){}
-    setTimeout(beginPlayback, 80);
+    clearWatch(); clearHlTimers(); try{ synth.cancel(); }catch(e){}
+    setTimeout(()=>{ if(state.playing) speakFromCurrent(); }, 80);
   }
-  function pause(){ state.playing=false; $('#playBtn').textContent='▶'; clearWatch(); if(synth){ try{ synth.cancel(); }catch(e){} } }
+  function pause(){ state.playing=false; $('#playBtn').textContent='▶'; clearWatch(); clearHlTimers(); if(synth){ try{ synth.cancel(); }catch(e){} } }
   function stop(){ pause(); }
   function togglePlay(){ state.playing ? pause() : play(); }
   function restart(){ // re-speak from current position without the cancel race
     if(!state.playing || !synth) return;
-    clearWatch(); try{ synth.cancel(); }catch(e){}
-    setTimeout(()=>{ if(state.playing) speakChunk(); }, 80);
+    clearWatch(); clearHlTimers(); try{ synth.cancel(); }catch(e){}
+    setTimeout(()=>{ if(state.playing) speakFromCurrent(); }, 80);
   }
-  function goTo(i){ state.idx=Math.max(0,Math.min(i,state.sentences.length-1)); highlight(); scrollToCurrent(); restart(); }
+  // click a sentence → start there, no heading
+  function goTo(i){ state.idx=Math.max(0,Math.min(i,state.sentences.length-1)); state.headingPending=false; highlight(); scrollToCurrent(); restart(); }
+  // click a chapter title → start at that chapter and read its heading
+  function goToChapter(ci){
+    const ch=state.chapters[ci]; if(!ch) return;
+    state.idx=ch.startSent; state.headingPending=true; highlightHeading(ci);
+    if(state.playing) restart();
+  }
 
   // every character we might assign a voice to: those detected in headings + any added by hand
   function allCastNames(){
@@ -655,6 +717,31 @@
     if(!(state.cfg.characters||[]).includes(n) && !distinctPOVs().includes(n)) (state.cfg.characters=state.cfg.characters||[]).push(n);
     inp.value=''; save(); renderCast(); inp.focus();
     toast('Added “'+n+'.” Pick a voice for them.');
+  }
+
+  /* ---------- voice list curation ---------- */
+  function isVoiceEnabled(name){ const en=state.cfg.enabledVoices; return !Array.isArray(en) || en.includes(name); }
+  function setVoiceEnabled(name, on){
+    let en = Array.isArray(state.cfg.enabledVoices) ? state.cfg.enabledVoices.slice() : state.voices.map(v=>v.name);
+    if(on){ if(!en.includes(name)) en.push(name); } else { en = en.filter(n=>n!==name); }
+    state.cfg.enabledVoices = en; save();
+    fillVoiceSelect($('#voiceSel'), state.cfg.voiceName);
+    fillVoiceSelect($('#narratorSel'), state.cfg.voiceName);
+    renderCast(); renderVoiceManager();
+  }
+  function renderVoiceManager(){
+    const box=$('#voiceMgrList'); if(!box) return;
+    box.innerHTML='';
+    if(!state.voices.length){ box.innerHTML='<div class="cast-empty">No voices found in this browser.</div>'; }
+    state.voices.forEach(v=>{
+      const row=el('label','vm-item');
+      const cb=el('input'); cb.type='checkbox'; cb.checked=isVoiceEnabled(v.name);
+      cb.onchange=()=>setVoiceEnabled(v.name, cb.checked);
+      row.appendChild(cb); row.appendChild(el('span',null,voiceLabel(v)));
+      box.appendChild(row);
+    });
+    const shown=visibleVoices([state.cfg.voiceName]).length;
+    const cnt=$('#voiceCount'); if(cnt) cnt.textContent=state.voices.length?('('+shown+' of '+state.voices.length+' shown)'):'';
   }
 
   /* ---------- notes ---------- */
@@ -829,7 +916,7 @@
   function useText(raw){
     if(!raw.trim()){ toast('Add some text first.'); return; }
     const parsed = parseManuscript(raw);
-    state.chapters = parsed.chapters; state.sentences = parsed.sentences; state.idx=0;
+    state.chapters = parsed.chapters; state.sentences = parsed.sentences; state.idx=0; state.headingPending=true;
     save(); render();
     toast(`Loaded ${state.chapters.length} chapter${state.chapters.length>1?'s':''}, ${state.sentences.length} sentences.`);
   }
@@ -883,9 +970,16 @@
     $('#announceHeadings').onchange=(e)=>{ state.cfg.announceHeadings=e.target.checked; save(); };
     $('#castAddBtn').onclick=addCharacter;
     $('#castAddName').onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); addCharacter(); } };
+    $('#vmAll').onclick=()=>{ state.cfg.enabledVoices=null; save(); loadVoices(); };
+    $('#vmStarred').onclick=()=>{ state.cfg.enabledVoices=state.voices.filter(v=>voiceScore(v)>=3).map(v=>v.name); save(); loadVoices(); };
 
     // sentence click: single = jump, dblclick = edit; click on note button handled elsewhere
-    $('#docInner').addEventListener('click',(e)=>{ const s=e.target.closest('.sent'); if(!s||state.editingSent!=null) return; goTo(Number(s.dataset.i)); });
+    $('#docInner').addEventListener('click',(e)=>{
+      if(state.editingSent!=null) return;
+      const title=e.target.closest('.chapter-title');
+      if(title){ const ci=Number(title.id.replace('ch','')); if(!isNaN(ci)) goToChapter(ci); return; }
+      const s=e.target.closest('.sent'); if(!s) return; goTo(Number(s.dataset.i));
+    });
     $('#docInner').addEventListener('dblclick',(e)=>{ const s=e.target.closest('.sent'); if(!s) return; startEdit(Number(s.dataset.i)); });
     // long-press / right-click a sentence to note it
     $('#docInner').addEventListener('contextmenu',(e)=>{ const s=e.target.closest('.sent'); if(!s) return; e.preventDefault(); openComposer(Number(s.dataset.i)); });

@@ -20,7 +20,11 @@ installing, no servers, nothing to set up.
 - **🎭 A voice per character** — name your chapters `Chapter One: Riley` and the reader detects the POV character, reads the heading aloud, and switches to that character's voice. Assign voices in the **Voices** tab. Perfect for alternating-POV romance.
   - Characters are auto-detected from headings (tagged **in book**). Don't see one — e.g. a character whose chapters aren't loaded yet? Use **Add a character** to type their name and assign a voice anyway; it applies as soon as their chapters appear.
   - Each voice is labeled with its accent and gender, e.g. `✨ Alex · US ♂` or `✨ Samantha · US ♀`, so you can pick an American male/female easily.
-  - The voices in the list come from **your computer**, so they vary by machine. To add more: **macOS** → System Settings → Accessibility → Spoken Content → System Voice → *Manage Voices…* (Alex, Tom, and the "Enhanced" voices live there). **Windows** → Settings → Time & Language → Speech → *Manage voices*. New voices show up after you reopen the app.
+  - The voices in the list come from **your computer**, so they vary by machine. To add more: **macOS** → System Settings → Accessibility → Spoken Content → System Voice → *Manage Voices…* (Alex, Tom, and the "Enhanced" voices live there). **Windows** → Settings → Time & Language → Speech → *Manage voices*. After downloading, **fully quit and reopen your browser**, then reopen the app.
+  - **Siri voices can't be used.** Apple blocks the "Siri" voices from web browsers, so anything listed under *English (US) — Siri* won't appear here. Use the regular/Enhanced voices instead.
+  - **Too many voices?** In the Voices tab, open **"Which voices to show"** and uncheck the ones you don't want — the menus then show only your picks. ("Show all" and "Only ✨" are quick shortcuts.)
+
+- **▶ Start anywhere** — click any **sentence** to begin reading there, or click a **chapter title** to start at that chapter (it reads the heading first). Clicking a sentence never re-reads the heading.
 - **✋ Stop & Note** — one button pauses the reading and opens a note box.
 - **🎙 Voice or typing** — dictate your note ("find a less overused word for
   *shivered*", "make this line wittier") or type it.
