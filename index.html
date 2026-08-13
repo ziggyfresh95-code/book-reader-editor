@@ -331,9 +331,11 @@
   const $ = s => document.querySelector(s);
   const el = (t,c,txt)=>{const e=document.createElement(t); if(c)e.className=c; if(txt!=null)e.textContent=txt; return e;};
   const LS = { book:'bre_book', notes:'bre_notes', cfg:'bre_cfg' };
+  const PARSER_VERSION = 2; // bump when parseManuscript changes so saved books auto-re-parse
   const state = {
     chapters: [],      // {title, startSent, endSent}
     sentences: [],     // {text, chapter, para}  flat
+    raw: '',           // original manuscript text, so we can re-parse when the parser improves
     notes: [],         // {id, type, text, sentIndex, quote, chapter, contChapter, ts}
     idx: 0,
     playing: false,
@@ -364,7 +366,7 @@
   /* ---------- persistence ---------- */
   function save(){
     try{
-      localStorage.setItem(LS.book, JSON.stringify({chapters:state.chapters, sentences:state.sentences}));
+      localStorage.setItem(LS.book, JSON.stringify({chapters:state.chapters, sentences:state.sentences, raw:state.raw, pv:PARSER_VERSION}));
       localStorage.setItem(LS.notes, JSON.stringify(state.notes));
       localStorage.setItem(LS.cfg, JSON.stringify(state.cfg));
     }catch(e){/* storage may be full or blocked */}
@@ -372,7 +374,14 @@
   function load(){
     try{
       const b = JSON.parse(localStorage.getItem(LS.book)||'null');
-      if(b && b.sentences && b.sentences.length){ state.chapters=b.chapters||[]; state.sentences=b.sentences; }
+      if(b && b.sentences && b.sentences.length){
+        state.chapters=b.chapters||[]; state.sentences=b.sentences; state.raw=b.raw||'';
+        // if the parser has improved since this book was saved, re-flow it from the original text
+        if(state.raw && b.pv!==PARSER_VERSION){
+          const p=parseManuscript(state.raw);
+          if(p.sentences.length){ state.chapters=p.chapters; state.sentences=p.sentences; }
+        }
+      }
       const n = JSON.parse(localStorage.getItem(LS.notes)||'[]'); if(Array.isArray(n)) state.notes=n;
       const c = JSON.parse(localStorage.getItem(LS.cfg)||'null'); if(c) Object.assign(state.cfg, c);
     }catch(e){}
@@ -912,6 +921,7 @@
   function useText(raw){
     if(!raw.trim()){ toast('Add some text first.'); return; }
     const parsed = parseManuscript(raw);
+    state.raw = raw;
     state.chapters = parsed.chapters; state.sentences = parsed.sentences; state.idx=0; state.headingPending=true;
     save(); render();
     toast(`Loaded ${state.chapters.length} chapter${state.chapters.length>1?'s':''}, ${state.sentences.length} sentences.`);
@@ -1030,6 +1040,7 @@
   if(synth){ loadVoices(); setTimeout(loadVoices,300); }
   $('#rate').value=state.rate; $('#rateVal').textContent='1.0×';
   render();
+  if(state.raw) save(); // persist any startup re-parse (and the current parser version)
 })();
 </script>
 </body>
